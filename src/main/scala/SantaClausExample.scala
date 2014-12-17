@@ -15,77 +15,73 @@ import scala.concurrent.duration.{FiniteDuration, Duration, DurationInt}
  * Created by alain on 12/11/2014.
  */
 object SantaClaus extends App {
-  makeSantaWork(numReindeer = 9, numElves = 10)
-
-  case object Order
-
-  sealed trait Helper extends Actor {
-    import ExecutionContext.Implicits.global
-
-    val id: Int
-    val job: Unit
-
-    def randomDelay = math.random * 10000 toLong
-
-    def receive = {
-      case Order =>
-        job;
-        context.system.scheduler.scheduleOnce(Duration.create(randomDelay: Long, TimeUnit.MILLISECONDS), sender, IdleElf(self))
-    }
-  }
-
-  class Elf(val id: Int) extends Helper {
-    val job = println("elf %s meeting in the study." format(id))
-  }
-
-  class Reindeer(val id: Int) extends Helper {
-    val job = println("Reindeer %s delivering toys." format(id))
-  }
-
-  sealed trait NorthPoleMessage
-  case object Jolly extends NorthPoleMessage
-  case object Work extends NorthPoleMessage
-  case class loop(elves: Group[Elf], reindeers: Group[Reindeer]) extends NorthPoleMessage
-  case class KnockKnock[T <% Helper](group: Group[T]) extends NorthPoleMessage
-
-
-
+  makeSantaWork(numReindeer = 9, numElves = 7)
 
   def makeSantaWork(numReindeer: Int, numElves: Int): Unit = {
     val system = ActorSystem("SantaClausProblem")
     val santa = system.actorOf(Props(
       new Santa()),
       name = "santa")
-    //santa ! Jolly
+
     val secretary = system.actorOf(Props(
       new Secretary(numElves, numReindeer, santa)),
       name = "secretary")
 
+    for (i <- 1 until numElves + 1) {
+      val elfWorker = system.actorOf(Props(
+        new Elf(i, secretary)),
+        name = "elf-" + i.toString )
+      secretary ! IdleElf(elfWorker)
+    }
 
     for (i <- 1 until numReindeer + 1) {
       val reindeerWorker = system.actorOf(Props(
-        new Reindeer(i)),
+        new Reindeer(i, secretary)),
         name = "reindeer-" + i.toString )
-      //reindeerWorker ! Work
       secretary ! IdleReindeer(reindeerWorker)
-    }
-
-    for (i <- 1 until numElves + 1) {
-      val elfWorker = system.actorOf(Props(
-        new Elf(i)),
-        name = "elf-" + i.toString )
-      // ! Work
-      secretary ! IdleElf(elfWorker)
     }
   }
 
-
-  case class Group[ActorRef](capacity: Int, helpers: List[ActorRef] = List()) {
+  sealed trait NorthPoleMessage
+  case object Jolly extends NorthPoleMessage
+  case object OrderReindeer extends NorthPoleMessage
+  case object OrderElf extends NorthPoleMessage
+  case class IdleReindeer(reindeer: ActorRef) extends NorthPoleMessage
+  case class IdleElf(elf: ActorRef) extends NorthPoleMessage
+  case class Group[ActorRef](capacity: Int, helpers: List[ActorRef] = List()) extends NorthPoleMessage {
     def hasSpace = helpers.size < capacity
   }
 
-  case class IdleReindeer(reindeer: ActorRef)
-  case class IdleElf(elf: ActorRef)
+  sealed trait Helper extends Actor {
+    import ExecutionContext.Implicits.global
+
+    val id: Int
+    val job: Unit
+    val secretary: ActorRef
+
+    def randomDelay = math.random * 1000000 toLong
+
+    def receive = {
+      case OrderReindeer =>
+        job;
+        implicit val timeout = Timeout(randomDelay, TimeUnit.MILLISECONDS)
+        val futures: Future[Any] =   secretary ask IdleReindeer(self) // This doesn't seem to do anything. Find a different way to create a future
+        futures onComplete {_ => secretary ! IdleReindeer(self);println("Done with timeout %d: Reindeer", randomDelay)}
+      case OrderElf =>
+        job;
+        implicit val timeout = Timeout(randomDelay, TimeUnit.MILLISECONDS)
+        val futures: Future[Any] =   secretary ask IdleElf(self)
+        futures onComplete {_ => secretary ! IdleElf(self);println("Done with timeout %d: Elf", randomDelay)}
+    }
+  }
+
+  class Elf(val id: Int, val secretary: ActorRef) extends Helper {
+    val job = println("elf %s meeting in the study." format(id))
+  }
+
+  class Reindeer(val id: Int, val secretary: ActorRef) extends Helper {
+    val job = println("Reindeer %s delivering toys." format(id))
+  }
 
   class Secretary(numElves: Int, numReindeer: Int, santaHandler: ActorRef) extends Actor {
 
@@ -111,26 +107,18 @@ object SantaClaus extends App {
   class Santa() extends Actor with Stash{
     import ExecutionContext.Implicits.global
 
-
-    def giveOrderAndWait(helpers: List[ActorRef]) = {
-      println("\r\nHo! Ho! Ho! Let's %s!" format(
-        if(helpers.isInstanceOf[List[Reindeer]]) "deliver toys"
-        else "meet in my study"))
-      implicit val timeout = Timeout(2.seconds)
-      val futures: Seq[Future[Any]] = helpers map {  _ ask Order }
+    def giveOrderAndWaitReindeer(helpers: List[ActorRef]) = {
+      println("\r\nHo! Ho! Ho! Let's deliver toys!")
+      implicit val timeout = Timeout(30.seconds)
+      val futures: Seq[Future[Any]] = helpers map {  _ ask OrderReindeer }
       Future sequence futures onComplete {_ => self ! Jolly}
-//      val futuresSeq:Future[Seq[Any]] = Future sequence futures
-//      val x:Timeout = Timeout(2000)
-//      val seqOfFutures:TraversableOnce[Future[Any]] = Seq(futuresSeq, Timeout(2000))
-//      val timeout =
-//        akka.pattern.after(FiniteDuration.apply(2000, TimeUnit.MILLISECONDS), using = context.system.scheduler) {
-//          Future.successful(Unit) }
-//      val futureWithTimeout =
-//        Future firstCompletedOf Seq(Future sequence futures onComplete {_ => self ! Jolly}, timeout);
-//      futureWithTimeout onComplete { _ => self ! Jolly }
-//      val result: Future[Seq[Option[Helper]]] = Future.sequence(futureWithTimeout)
-//      result.onSuccess{ case _ => self ! Jolly }
+    }
 
+    def giveOrderAndWaitElf(helpers: List[ActorRef]) = {
+      println("\r\nHo! Ho! Ho! Let's meet in the study!")
+      implicit val timeout = Timeout(30.seconds)
+      val futures: Seq[Future[Any]] = helpers map {  _ ask OrderElf }
+      Future sequence futures onComplete {_ => self ! Jolly}
     }
 
     def waiting: Receive = {
@@ -140,16 +128,13 @@ object SantaClaus extends App {
 
     context.setReceiveTimeout(0 milliseconds)
     def receive = {
+      case Group(9, helpers: List[ActorRef]) => giveOrderAndWaitReindeer(helpers)
       case ReceiveTimeout =>
         context.become(({
-          case Group(_, helpers: List[ActorRef]) => giveOrderAndWait(helpers)}: Receive))
-      case Group(9, helpers: List[ActorRef]) => giveOrderAndWait(helpers)
+          case Group(9, helpers: List[ActorRef]) => giveOrderAndWaitReindeer(helpers)
+          case Group(3, helpers: List[ActorRef]) => giveOrderAndWaitElf(helpers)}: Receive))
       case Jolly =>
         context.become(waiting, discardOld = false)
     }
   }
-
-
 }
-
-

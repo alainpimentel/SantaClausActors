@@ -1,9 +1,11 @@
 # README #
 
-## The Santa Clause Problem ##
+## Implementation ##
 
 * This is an attempt to solve the Santa Claus Problem from William Stallings’s "Operating Systems" using Scala and Akka.
 * This implementation will be based on the solution found in Allen B. Downey's "The Little Book of Semaphores" (http://greenteapress.com/semaphores/)
+* Actual Scala code is based on https://github.com/remeniuk/scala-santa-claus/blob/master/src/main/scala/com/vasilrem/santa/actors/SantaClausSimulation.scala
+* Progress with the help of senia: http://stackoverflow.com/questions/27438110/scala-actors-vs-akka-actors
 
 ### Problem Statement ###
 
